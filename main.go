@@ -50,7 +50,7 @@ func main() {
 
 	router.HandleFunc("GET /f/{hash}", fileHandler.GetFileHandler)
 	router.HandleFunc("POST /f", fileHandler.PostFileHandlerStream)
-	//router.HandleFunc("POST /f/{hash}", fileHandler.DeleteFileHandler)
+	router.HandleFunc("POST /f/{hash}", fileHandler.DeleteFileHandler)
 	//router.HandleFunc("GET /s", fileHandler.GetSecretHandler)
 
 	uploadsDir := path.Join(cfg.UploadPath, "uploads")

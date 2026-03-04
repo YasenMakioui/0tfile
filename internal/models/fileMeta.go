@@ -7,5 +7,5 @@ type FileMeta struct {
 	MaxDownloadCount int       `json:"maxDownloadCount"`
 	ExpiresAt        time.Time `json:"expiresAt"`
 	OriginalName     string    `json:"originalName"`
-	DeletionToken    string    `json:deletionToken`
+	DeletionToken    string    `json:"deletionToken"`
 }

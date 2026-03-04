@@ -1,0 +1,4 @@
+Deletion test call
+curl -X POST -H "X-Deletion-Token: deletion123" http://localhost:3000/f/97ec4901fc9b57a22ed7fb99eb5621c037e71121550171943e72a06acd2aeb73
+Upload file test call
+curl -X POST -F "file=@./main.go" -H "max-download-count:3" -H "max-upload-days:5" http://localhost:3000/f

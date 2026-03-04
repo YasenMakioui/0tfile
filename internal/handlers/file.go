@@ -29,6 +29,75 @@ func NewFileHandler(config *config.Config) *FileHandler {
 	}
 }
 
+// Will delete the file if the deletion token matches.
+// The deletion comes from the X-Deletion-Token
+func (fh *FileHandler) DeleteFileHandler(w http.ResponseWriter, r *http.Request) {
+
+	fileHash := r.PathValue("hash")
+
+	log.Printf("got request for file %s", fileHash)
+
+	deletionToken := r.Header.Get("X-Deletion-Token")
+
+	if deletionToken == "" {
+		http.Error(w, "Deletion token not provided", http.StatusBadRequest)
+		return
+	}
+
+	// Paths
+
+	//uploadsPath := path.Join(fh.Cfg.UploadPath, "uploads")
+	metaPath := path.Join(fh.Cfg.UploadPath, "uploads", "meta")
+	savePath := path.Join(fh.Cfg.UploadPath, "uploads", fileHash)
+
+	// Read metadata file
+
+	metaFile := path.Join(metaPath, fileHash+".json")
+
+	if _, err := os.Stat(metaFile); err != nil {
+		http.Error(w, "Not found", http.StatusNotFound)
+		log.Printf("tried to access a non-existent file %s", metaFile)
+		log.Println(err)
+		return
+	}
+
+	jsonData, err := os.ReadFile(metaFile)
+
+	if err != nil {
+		http.Error(w, "Something went wrong", http.StatusInternalServerError)
+		log.Printf("could not open file %s", metaFile)
+		log.Println(err)
+		return
+	}
+
+	var fm models.FileMeta
+
+	if err := json.Unmarshal(jsonData, &fm); err != nil {
+		http.Error(w, "Something went wrong", http.StatusInternalServerError)
+		log.Printf("could not parse metadata file contents of %s", metaFile)
+		log.Println(err)
+		return
+	}
+
+	if fm.DeletionToken != deletionToken {
+		http.Error(w, "Deletion token does not match", http.StatusForbidden)
+		log.Printf("tried to delete metadata file with wrong token %s", deletionToken)
+		return
+	}
+
+	log.Printf("deleting file %s", savePath)
+
+	if err := cleanupAndAddToOrphans(savePath); err != nil {
+		http.Error(w, "Could not delete file", http.StatusInternalServerError)
+		log.Println(err)
+		return
+	}
+
+	log.Printf("successfully deleted file %s", savePath)
+
+	fmt.Fprintf(w, "Deleted file %s", fm.OriginalName)
+}
+
 // Will return the file, but also check if the max download count
 // arrived to 0 or less (not probable), or if the time expired.
 // This handler does not remove the already expired files.
@@ -345,9 +414,12 @@ func cleanupAndAddToOrphans(p string) error {
 	fileName := path.Base(p)
 	filePath := path.Dir(p)
 	orphanFile := path.Join(filePath, "orphans", fileName)
+	orphanMetadataFile := path.Join(filePath, "orphans", fileName+".json")
+	metadataFile := path.Join(filePath, "meta", fileName+".json")
 
 	log.Println("starting cleanup process")
 
+	log.Printf("deleting file %s", p)
 	if err := os.Remove(p); err != nil {
 		log.Printf("could not remove file %s", p)
 		log.Printf("creating orphan file %s", orphanFile)
@@ -357,6 +429,18 @@ func cleanupAndAddToOrphans(p string) error {
 		}
 		return err
 	}
+
+	log.Printf("deleting file %s", metadataFile)
+	if err := os.Remove(metadataFile); err != nil {
+		log.Printf("could not remove file %s", p)
+		log.Printf("creating orphan file %s", orphanMetadataFile)
+		if _, err := os.Create(orphanMetadataFile); err != nil {
+			log.Printf("failed to create %s, remove manually", orphanMetadataFile)
+			return err
+		}
+		return err
+	}
+
 	log.Println("completed cleanup successfully")
 
 	return nil
