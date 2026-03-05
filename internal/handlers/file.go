@@ -328,12 +328,16 @@ func (fh *FileHandler) PostFileHandlerStream(w http.ResponseWriter, r *http.Requ
 
 		maxUploadDaysIntInHours := maxUploadDaysInt * 24
 
+		// Generate token
+
+		deletionToken := randStr(16)
+
 		fileMeta := models.FileMeta{
 			Path:             path.Join(uploadsPath, savedFile),
 			MaxDownloadCount: maxDownloadCountInt,
 			ExpiresAt:        time.Now().Add(time.Duration(maxUploadDaysIntInHours) * time.Hour),
 			OriginalName:     part.FileName(),
-			DeletionToken:    "delete123",
+			DeletionToken:    deletionToken,
 		}
 
 		// generate the name which is simply the filename with a json extension
@@ -398,7 +402,8 @@ func (fh *FileHandler) PostFileHandlerStream(w http.ResponseWriter, r *http.Requ
 			return
 		}
 
-		fmt.Fprintf(w, "Successfully uploaded %s (%d bytes) with hash %s", part.FileName(), size, savedFile)
+		fmt.Fprintf(w, "Successfully uploaded %s (%d bytes) with hash %s\n", part.FileName(), size, savedFile)
+		fmt.Fprintf(w, "deletion token: %s", deletionToken)
 		return
 	}
 

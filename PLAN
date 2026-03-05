@@ -1,5 +1,3 @@
-* Using a deletion token remove the file
-** Deletion is implemented, but we need to create a deletion token into the struct in the upload method.
 * Encrypt files with password
 * Create onetime secret and return path
 * Think of a way to cleanup files, maybe a simple bash script that is executed with a cron would work.
