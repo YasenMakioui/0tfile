@@ -1,14 +1,10 @@
 package handlers
 
 import (
-	"crypto/rand"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
 	"log"
-	"math/big"
 	"net/http"
 	"os"
 	"path"
@@ -17,6 +13,7 @@ import (
 
 	"github.com/YasenMakioui/0tfile/internal/config"
 	"github.com/YasenMakioui/0tfile/internal/models"
+	"github.com/minio/sio"
 )
 
 type FileHandler struct {
@@ -107,6 +104,10 @@ func (fh *FileHandler) GetFileHandler(w http.ResponseWriter, r *http.Request) {
 
 	log.Printf("got request for file %s", fileHash)
 
+	// get the decryption key from the header
+
+	decryptionKey := r.Header.Get("X-Decryption-Key")
+
 	metadataFile := path.Join(fh.Cfg.UploadPath, "uploads", "meta", fileHash+".json")
 
 	if _, err := os.Stat(metadataFile); err != nil {
@@ -152,7 +153,7 @@ func (fh *FileHandler) GetFileHandler(w http.ResponseWriter, r *http.Request) {
 	// check if maxdownloads is more than 0
 
 	if fileMeta.MaxDownloadCount <= 0 {
-		log.Printf("can't return file with maxdownloadcount of %s", fileMeta.MaxDownloadCount)
+		log.Printf("can't return file with maxdownloadcount of %d", fileMeta.MaxDownloadCount)
 		http.Error(w, "file expired", http.StatusGone)
 		return
 	}
@@ -210,10 +211,23 @@ func (fh *FileHandler) GetFileHandler(w http.ResponseWriter, r *http.Request) {
 
 	defer file.Close()
 
+	// decrypt file
+
+	decReader, err := sio.DecryptReader(file, sio.Config{Key: []byte(decryptionKey)})
+
+	if err != nil {
+		http.Error(w, "could not decrypt file", http.StatusBadRequest)
+		log.Printf("decryption of file %s failed", fileMeta.Path)
+		log.Println(err)
+		return
+	}
+
+	// decryption went well, add headers.
+
 	w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=\"%s\"", fileMeta.OriginalName))
 	w.Header().Set("Content-Type", "application/octet-stream")
 
-	_, err = io.Copy(w, file)
+	_, err = io.Copy(w, decReader)
 
 	if err != nil {
 		log.Printf("could not send file data of %s to client", fileMeta.Path)
@@ -266,6 +280,8 @@ func (fh *FileHandler) PostFileHandlerStream(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
+	encryptKey := randStr(32) // Temp encryption key
+
 	for {
 		part, err := mr.NextPart()
 		if err == io.EOF {
@@ -281,8 +297,7 @@ func (fh *FileHandler) PostFileHandlerStream(w http.ResponseWriter, r *http.Requ
 			continue
 		}
 
-		log.Println("Filename: ", part.FileName())
-		log.Println("Content-Type: ", part.Header.Get("Content-Type"))
+		log.Printf("got filename %s: ", part.FileName())
 
 		// Filename hash
 		savedFile := genFileNameHash(part.FileName())
@@ -305,10 +320,20 @@ func (fh *FileHandler) PostFileHandlerStream(w http.ResponseWriter, r *http.Requ
 			return
 		}
 
-		// copy data into file, cleanup file if something goes wrong
-		defer file.Close()
+		// encrypt using sio
 
-		size, err := io.Copy(file, part)
+		encWriter, err := sio.EncryptWriter(file, sio.Config{
+			Key: []byte(encryptKey),
+		})
+
+		if err != nil {
+			http.Error(w, "could not save file", http.StatusInternalServerError)
+			log.Println(err)
+			log.Printf("failed encrypting file %s", savePath)
+			return
+		}
+
+		size, err := io.Copy(encWriter, part)
 		if err != nil {
 			http.Error(w, "could not save file", http.StatusInternalServerError)
 			log.Println(err)
@@ -317,9 +342,25 @@ func (fh *FileHandler) PostFileHandlerStream(w http.ResponseWriter, r *http.Requ
 			if err := cleanupAndAddToOrphans(savePath); err != nil {
 				log.Println(err)
 			}
+
+			return
 		}
 
-		log.Println("File Size: ", size)
+		// after finishing copying data close files
+
+		if err := encWriter.Close(); err != nil {
+			http.Error(w, "could not save file", http.StatusInternalServerError)
+			log.Println(err)
+			log.Println("could not close file and finish encryption")
+
+			if err := cleanupAndAddToOrphans(savePath); err != nil {
+				log.Println(err)
+			}
+
+			return
+		}
+
+		log.Printf("file size is %d", size)
 
 		// TODO: Encrypt the file
 		// https://medium.com/@mertkimyonsen/encrypt-a-file-using-go-f1fe3bc7c635
@@ -402,8 +443,12 @@ func (fh *FileHandler) PostFileHandlerStream(w http.ResponseWriter, r *http.Requ
 			return
 		}
 
-		fmt.Fprintf(w, "Successfully uploaded %s (%d bytes) with hash %s\n", part.FileName(), size, savedFile)
-		fmt.Fprintf(w, "deletion token: %s", deletionToken)
+		downloadUrl := "http://" + fh.Cfg.BaseUrl + "/f/" + savedFile
+
+		fmt.Fprintf(w, "Successfully uploaded %s (%d bytes) with hash %s ✅\n", part.FileName(), size, savedFile)
+		fmt.Fprintf(w, "Download URL: %s\n 📦", downloadUrl)
+		fmt.Fprintf(w, "Deletion token: %s 🔥\n", deletionToken)
+		fmt.Fprintf(w, "Encryption pwd: %s 🔑", encryptKey)
 		return
 	}
 
@@ -449,35 +494,4 @@ func cleanupAndAddToOrphans(p string) error {
 	log.Println("completed cleanup successfully")
 
 	return nil
-}
-
-// Simply removes a file
-func removeFile(p string) error {
-	if err := os.Remove(p); err != nil {
-		return err
-	}
-
-	return nil
-}
-
-// Generates a hash using the given string, the actual unix time and a random 3 sequence number
-func genFileNameHash(fn string) string {
-	unixTime := fmt.Sprint(time.Now().Unix())
-	salt := randStr(3)
-	algo := sha256.New()
-	algo.Write([]byte(fn + unixTime + salt))
-	return hex.EncodeToString(algo.Sum(nil))
-}
-
-// Generates a random stringth of the length n
-func randStr(n int) string {
-	const charset = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
-
-	result := make([]byte, n)
-	for i := range result {
-		idx, _ := rand.Int(rand.Reader, big.NewInt(int64(len(charset))))
-		result[i] = charset[idx.Int64()]
-	}
-
-	return string(result)
 }

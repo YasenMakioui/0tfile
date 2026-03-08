@@ -17,6 +17,8 @@ type Config struct {
 	UploadPath string
 	// limit of time for the file stored in days
 	MaxUploadedDays int
+	// base url used to return the download url and one time password
+	BaseUrl string
 }
 
 // Returns a Config type with 0tfile values.
@@ -33,12 +35,14 @@ func Load() *Config {
 	maxDownloadCount, _ := strconv.Atoi(getEnv("MAX_DOWNLOAD_COUNT", "3"))
 	uploadPath := getEnv("UPLOAD_PATH", "/tmp/uploads")
 	maxUploadedDays, _ := strconv.Atoi(getEnv("MAX_UPLOADED_DAYS", "14"))
+	baseUrl := getEnv("BASE_URL", "localhost")
 
 	return &Config{
 		MaxUploadSize:    maxUploadSize,
 		MaxDownloadCount: maxDownloadCount,
 		UploadPath:       uploadPath,
 		MaxUploadedDays:  maxUploadedDays,
+		BaseUrl:          baseUrl,
 	}
 }
 

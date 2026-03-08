@@ -47,11 +47,12 @@ func main() {
 	// instantiate handler
 
 	fileHandler := handlers.NewFileHandler(cfg)
+	secretHandler := handlers.NewSecretHandler(cfg)
 
 	router.HandleFunc("GET /f/{hash}", fileHandler.GetFileHandler)
 	router.HandleFunc("POST /f", fileHandler.PostFileHandlerStream)
 	router.HandleFunc("POST /f/{hash}", fileHandler.DeleteFileHandler)
-	//router.HandleFunc("GET /s", fileHandler.GetSecretHandler)
+	router.HandleFunc("GET /s/{hash}", secretHandler.GetSecretHandler)
 
 	uploadsDir := path.Join(cfg.UploadPath, "uploads")
 	metaDir := path.Join(uploadsDir, "meta")
